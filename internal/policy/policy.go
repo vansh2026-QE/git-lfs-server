@@ -19,11 +19,8 @@ type RepoPolicy struct {
 // PrincipalGrants holds one segment trie per Action for a single principal.
 // Actions with no grants are simply absent from Tries; absence means no
 // permission, not silent allow.
+//
+// Trie is defined in trie.go.
 type PrincipalGrants struct {
 	Tries map[Action]*Trie
 }
-
-// Trie is the per-(principal, repo, action) segment trie of grant points.
-// Operations and segment-matching logic live in trie.go.
-// See docs/auth-design.md §6.
-type Trie struct{}

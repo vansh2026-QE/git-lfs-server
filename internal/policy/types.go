@@ -68,12 +68,19 @@ func (e Effect) String() string {
 	}
 }
 
+// GrantID is the stable identifier of a single grant. The Loader assigns it
+// (in v1, derived from repo/principal/action/path so it is stable across
+// reloads and self-describing in audit logs). The trie and PDP treat it as
+// opaque: they store and return it but never parse it, so its representation
+// can change (e.g. a server-assigned token) without touching them.
+type GrantID string
+
 // Decision is the PDP output. Source attributes the match to the principal
-// whose trie matched (empty on Deny). MatchedRule is the stable grant ID
-// assigned by the Loader. See docs/auth-design.md §5.2.
+// whose trie matched (empty on Deny). MatchedRule is the grant that matched.
+// See docs/auth-design.md §5.2.
 type Decision struct {
 	Effect      Effect
 	Source      string
-	MatchedRule string
+	MatchedRule GrantID
 	Reason      string
 }
