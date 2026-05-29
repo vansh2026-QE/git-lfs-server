@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "memberships": {
+    "user:alice": ["group:engineers"],
+    "user:bob": ["group:engineers", "group:admins"]
+  },
+  "repos": {
+    "myrepo": {
+      "principals": {
+        "user:alice": {
+          "upload": ["mine/**"],
+          "download": ["**"]
+        },
+        "group:engineers": {
+          "upload": ["src/**"],
+          "download": ["src/**", "docs/**"]
+        },
+        "group:admins": {
+          "upload": ["**"],
+          "download": ["**"]
+        }
+      }
+    }
+  }
+}
