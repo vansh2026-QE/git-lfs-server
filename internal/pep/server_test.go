@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/vansh2026/git-lfs-server/internal/loader"
 	"github.com/vansh2026/git-lfs-server/internal/memstore"
 	"github.com/vansh2026/git-lfs-server/internal/pep"
-	"github.com/vansh2026/git-lfs-server/internal/ports"
 )
 
 const demoPolicy = `{
@@ -32,19 +32,15 @@ const demoPolicy = `{
   }
 }`
 
-// stubStore mints deterministic same-origin-ish hrefs. The real LocalFSObjectStore
-// arrives in Commit 12; this is enough to exercise the batch pipeline.
-type stubStore struct{}
-
-func (stubStore) MintUpload(repo, oid, path string, size int64) (ports.ObjectAction, error) {
-	return ports.ObjectAction{Href: "http://store/" + repo + "/objects/" + oid}, nil
-}
-
-func (stubStore) MintDownload(repo, oid, path string) (ports.ObjectAction, error) {
-	return ports.ObjectAction{Href: "http://store/" + repo + "/objects/" + oid}, nil
-}
-
 func newDemoServer(t *testing.T) *pep.Server {
+	t.Helper()
+	return newDemoLocalServer(t).Server
+}
+
+// newDemoLocalServer builds the composed demo handler: a batch Server plus the
+// open transfer endpoints, sharing one LocalFSObjectStore as both the
+// ObjectStore (mint) and the BlobStore (bytes).
+func newDemoLocalServer(t *testing.T) *pep.LocalServer {
 	t.Helper()
 	res, err := loader.New(memstore.NewStringPolicyStore(demoPolicy)).Load(context.Background())
 	if err != nil {
@@ -54,12 +50,14 @@ func newDemoServer(t *testing.T) *pep.Server {
 		"alice": {Password: "pw"},
 		"bob":   {Password: "pw"},
 	})
-	return pep.NewServer(auth, memstore.NewInMemoryPathIndex(), stubStore{}, memstore.NewStderrAuditSink(), res.Policy)
+	store := memstore.NewLocalFSObjectStore(t.TempDir(), "http://example.test")
+	srv := pep.NewServer(auth, memstore.NewInMemoryPathIndex(), store, memstore.NewStderrAuditSink(), res.Policy)
+	return pep.NewLocalServer(srv, store)
 }
 
 // doBatch posts a batch request as user (empty user = anonymous) and returns
 // the recorder plus the decoded response.
-func doBatch(t *testing.T, srv *pep.Server, user, op, body string) (*httptest.ResponseRecorder, pep.BatchResponse) {
+func doBatch(t *testing.T, srv http.Handler, user, op, body string) (*httptest.ResponseRecorder, pep.BatchResponse) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/demo/objects/batch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/vnd.git-lfs+json")
@@ -163,4 +161,51 @@ func TestBatchMalformedBadRequest(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
+}
+
+func TestObjectRoundTripThroughTransferEndpoints(t *testing.T) {
+	srv := newDemoLocalServer(t)
+	const oid, content = "oidpub", "data"
+
+	// Authorize + record via the batch endpoint, and capture the minted href.
+	rec, resp := doBatch(t, srv, "alice", "upload", uploadBody(oid, "public/x.bin"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload batch status = %d\n%s", rec.Code, rec.Body.String())
+	}
+	target := mustPath(t, resp.Objects[0].Actions["upload"].Href)
+
+	// PUT the bytes to the minted capability URL (transfer carries no auth).
+	putRec := httptest.NewRecorder()
+	srv.ServeHTTP(putRec, httptest.NewRequest(http.MethodPut, target, strings.NewReader(content)))
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200", putRec.Code)
+	}
+
+	// GET them back and confirm the bytes round-trip.
+	getRec := httptest.NewRecorder()
+	srv.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, target, nil))
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", getRec.Code)
+	}
+	if got := getRec.Body.String(); got != content {
+		t.Errorf("round-trip body = %q, want %q", got, content)
+	}
+}
+
+func TestGetUnknownObjectNotFound(t *testing.T) {
+	srv := newDemoLocalServer(t)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/demo/objects/missing", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func mustPath(t *testing.T, rawURL string) string {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse href %q: %v", rawURL, err)
+	}
+	return u.Path
 }
