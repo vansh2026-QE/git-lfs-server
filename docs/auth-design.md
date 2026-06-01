@@ -912,6 +912,7 @@ A fleet of valid and invalid policy files under `testdata/`. Each has a correspo
 | JSON Schema file | Nice-to-have for CI validation and editor support. Not required for v1. | When the format settles; bundle with the first non-v1 schema bump. |
 | Production storage backends | Postgres `PathIndex`, S3 `ObjectStore`, OTel `AuditSink`, OAuth `Authenticator`. Each is a separate adapter PR. | After the core is in place and being exercised. |
 | Encryption at rest, audit retention, locks API | Cross-referenced to [docs/proposals/components.md](docs/proposals/components.md) section 7. | Per the prioritization in that doc. |
+| Seamless mixed-access checkout | The forked client already maps a per-object download `403` to a `DownloadDeclinedError` and re-emits the pointer (see `tq/transfer_queue.go` `shouldTreatAsDeclined` and `commands/command_smudge.go`), gated on `lfs.skipdownloaderrorcodes`; the server already returns `403` on a download denial (`internal/pep/enforcer.go`). What's missing is wiring standard LFS endpoint discovery + a git credential helper and shipping the `403` skip-code as a default, so a bare `git clone`/`pull` materializes authorized objects and silently leaves denied ones as pointers. Files a user cannot read necessarily remain pointer files in the tree — inherent to path-level read policy within one repo. | When the real `Authenticator` + endpoint discovery land. |
 
 ## 14. Implementation order (auth-specific)
 
