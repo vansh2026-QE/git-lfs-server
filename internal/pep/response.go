@@ -9,12 +9,15 @@ type BatchResponse struct {
 }
 
 // Transfer is one object's result: either Actions (permitted) or Error
-// (denied / not found), never both.
+// (denied / not found), never both. Authenticated tells the client the action
+// hrefs are self-authorizing capability URLs, so it sends no extra credentials
+// to them (the demo's open-transfer-endpoint decision). See plan.
 type Transfer struct {
-	OID     string             `json:"oid"`
-	Size    int64              `json:"size"`
-	Actions map[string]*Action `json:"actions,omitempty"`
-	Error   *ObjectError       `json:"error,omitempty"`
+	OID           string             `json:"oid"`
+	Size          int64              `json:"size"`
+	Authenticated bool               `json:"authenticated,omitempty"`
+	Actions       map[string]*Action `json:"actions,omitempty"`
+	Error         *ObjectError       `json:"error,omitempty"`
 }
 
 // Action is a transfer action under the "download" or "upload" key.
