@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SERVER="http://localhost:8080"; REPO="demo"; USER=""; PASSWORD=""; ORIGIN=""
-NAME=""; EMAIL=""
+NAME=""; EMAIL=""; FORK_LFS=""
 
 usage() {
   cat <<'EOF'
@@ -30,8 +30,31 @@ use_fork_lfs() {
   local here bin
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   bin="$here/../client-implementation/git-lfs/bin"
-  [ -x "$bin/git-lfs" ] && export PATH="$bin:$PATH"
+  if [ -x "$bin/git-lfs" ]; then
+    export PATH="$(cd "$bin" && pwd):$PATH"
+    FORK_LFS="$(cd "$bin" && pwd)/git-lfs"
+  else
+    FORK_LFS="$(command -v git-lfs || true)"
+  fi
   echo "git-lfs: $(command -v git-lfs) ($(git-lfs version))"
+}
+
+# wire_fork_paths points this repo's LFS filters and hooks at the fork by
+# absolute path, so git push/pull/clone use it regardless of the caller's PATH.
+# Without this the export PATH above only lasts for this script's process, and a
+# later `git push` falls back to whatever git-lfs is on the interactive shell's
+# PATH (often upstream, which omits the object name the policy server needs).
+wire_fork_paths() {
+  [ -n "$FORK_LFS" ] || return 0
+  git config --local filter.lfs.process  "$FORK_LFS filter-process"
+  git config --local filter.lfs.clean    "$FORK_LFS clean -- %f"
+  git config --local filter.lfs.smudge   "$FORK_LFS smudge -- %f"
+  git config --local filter.lfs.required true
+  local hooks h; hooks="$(git rev-parse --git-path hooks)"; mkdir -p "$hooks"
+  for h in pre-push post-checkout post-commit post-merge; do
+    printf '#!/bin/sh\n"%s" %s "$@"\n' "$FORK_LFS" "$h" > "$hooks/$h"
+    chmod +x "$hooks/$h"
+  done
 }
 
 write_gitattributes() {
@@ -80,6 +103,7 @@ case "$cmd" in
     git config lfs.url "$(lfs_url_auth)"
     git config lfs.skipdownloaderrorcodes 403
     git lfs install --local >/dev/null
+    wire_fork_paths
     set_identity
     write_gitattributes
     git add .gitattributes
@@ -93,6 +117,7 @@ case "$cmd" in
       "$REMOTE" ${DIR:+"$DIR"}
     cd "${DIR:-$(basename "${REMOTE%.git}")}"
     git lfs install --local >/dev/null
+    wire_fork_paths
     { [ -n "$NAME" ] || [ -n "$EMAIL" ]; } && set_identity
     echo "Cloned into $(pwd), wired to $(git config lfs.url | sed -E 's#://[^@]*@#://#')."
     ;;

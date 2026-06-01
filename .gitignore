@@ -1,2 +1,4 @@
 .cursor/
 client-implementation/
+anchor-lfs-clone/
+lfsd.env
