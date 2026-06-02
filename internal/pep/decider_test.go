@@ -22,8 +22,9 @@ func loadPolicy(t *testing.T, doc string) *policy.Policy {
 func TestDecideAll(t *testing.T) {
 	p := loadPolicy(t, `{
 		"version": 1,
-		"repos": {"r": {"principals": {
-			"user:alice": {"download": ["pub/**"], "upload": ["mine/**"]}
+		"repos": {"r": {"paths": {
+			"pub/**":  {"user:alice": "r"},
+			"mine/**": {"user:alice": "w"}
 		}}}
 	}`)
 	alice := policy.Subject{Principals: []string{"user:alice"}}

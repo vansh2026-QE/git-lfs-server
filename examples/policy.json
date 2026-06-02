@@ -2,19 +2,15 @@
   "version": 1,
   "repos": {
     "demo": {
-      "principals": {
-        "user:alice": {
-          "upload":   ["public/**", "private/privAlice/**"],
-          "download": ["public/**", "private/privAlice/**"]
+      "paths": {
+        "public/**": {
+          "user:alice": "rw",
+          "user:bob": "rw",
+          "user:vansh2026": "rw"
         },
-        "user:bob": {
-          "upload":   ["public/**", "private/privBob/**"],
-          "download": ["public/**", "private/privBob/**"]
-        },
-        "user:vansh2026": {
-          "upload":   ["public/**", "private/privVansh/**"],
-          "download": ["public/**", "private/privVansh/**"]
-        }
+        "private/privAlice/**": { "user:alice": "rw" },
+        "private/privBob/**":   { "user:bob": "rw" },
+        "private/privVansh/**": { "user:vansh2026": "rw" }
       }
     }
   }

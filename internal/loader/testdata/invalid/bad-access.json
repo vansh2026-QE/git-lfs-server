@@ -3,7 +3,7 @@
   "repos": {
     "myrepo": {
       "paths": {
-        "mine/**": { "user:alice": "r" }
+        "**": { "user:alice": "x" }
       }
     }
   }

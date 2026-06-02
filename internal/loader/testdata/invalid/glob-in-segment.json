@@ -2,10 +2,8 @@
   "version": 1,
   "repos": {
     "myrepo": {
-      "principals": {
-        "user:alice": {
-          "download": ["*.bin"]
-        }
+      "paths": {
+        "*.bin": { "user:alice": "r" }
       }
     }
   }

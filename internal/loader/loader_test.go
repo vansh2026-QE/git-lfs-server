@@ -49,10 +49,9 @@ func TestLoadSubsumptionWarning(t *testing.T) {
   "version": 1,
   "repos": {
     "myrepo": {
-      "principals": {
-        "user:alice": {
-          "download": ["public/**", "public/drafts/**"]
-        }
+      "paths": {
+        "public/**":        { "user:alice": "r" },
+        "public/drafts/**": { "user:alice": "r" }
       }
     }
   }
@@ -75,8 +74,8 @@ func TestLoadUndefinedGroupMembershipWarning(t *testing.T) {
   },
   "repos": {
     "myrepo": {
-      "principals": {
-        "user:alice": { "download": ["**"] }
+      "paths": {
+        "**": { "user:alice": "r" }
       }
     }
   }
@@ -103,8 +102,8 @@ func TestLoadGrantIDDerivation(t *testing.T) {
   "version": 1,
   "repos": {
     "myrepo": {
-      "principals": {
-        "user:alice": { "download": ["mine/**"] }
+      "paths": {
+        "mine/**": { "user:alice": "r" }
       }
     }
   }

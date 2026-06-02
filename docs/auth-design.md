@@ -680,34 +680,28 @@ If comments become necessary, switch to JSONC (JSON with `//` and `/* */`). Most
   },
   "repos": {
     "myrepo": {
-      "principals": {
-        "user:alice": {
-          "upload":   ["mine/**"],
-          "download": ["**"]
-        },
-        "group:engineers": {
-          "upload":   ["src/**", "tests/**"],
-          "download": ["src/**", "tests/**", "docs/**"]
-        },
-        "group:admins": {
-          "upload":   ["**"],
-          "download": ["**"]
-        },
-        "anonymous": {
-          "download": ["public/**"]
-        }
+      "paths": {
+        "**":        { "user:alice": "r", "group:admins": "rw" },
+        "mine/**":   { "user:alice": "rw" },
+        "src/**":    { "group:engineers": "rw" },
+        "tests/**":  { "group:engineers": "rw" },
+        "docs/**":   { "group:engineers": "r" },
+        "public/**": { "anonymous": "r" }
       }
     },
     "publicrepo": {
-      "principals": {
-        "anonymous": { "download": ["**"] }
+      "paths": {
+        "**": { "anonymous": "r" }
       }
     }
   }
 }
 ```
 
-Reading off effective access:
+The policy is path-centric (SVN authz style): each path maps principals to an
+access code -- `r` (download), `w` (upload), or `rw` (both). The loader
+transposes this into the internal per-principal, per-action tries; the PDP is
+unchanged. Reading off effective access:
 
 - **alice in myrepo**: own grants plus engineer grants. Uploads: `mine/**`, `src/**`, `tests/**`. Downloads: `**` (own grant subsumes everything).
 - **bob in myrepo**: engineer plus admin. Admin's `**` subsumes everything.
@@ -721,8 +715,7 @@ Reading off effective access:
 | `version` present and known (currently `1`) | Loader error |
 | Principal IDs match `^(user\|group\|service):[a-zA-Z0-9_.-]+$` or are exactly `anonymous` | Loader error |
 | Paths have no leading `/`, no trailing `/`, no `..`, no globs inside segments | Loader error |
-| Action names in supported set (`upload`, `download`; later `delete`, `verify`) | Loader error |
-| No wildcard action (`"*"` as action key) | Loader error -- avoids accidental scope creep when new actions are added |
+| Access codes are non-empty combinations of `r` (download) and `w` (upload), each at most once (`r`, `w`, `rw`) | Loader error |
 | Subsumed grants within (principal, action) | Loader warning -- redundant grant dropped |
 | Membership references a group not declared as `group:` anywhere | Loader warning |
 
@@ -754,7 +747,7 @@ flowchart TD
     Decode --> Version[validate version]
     Version --> Schema[validate schema shape]
     Schema --> Normalize[normalize paths and IDs]
-    Normalize --> Build[for each repo/principal/action: insert paths into trie]
+    Normalize --> Build[for each repo/path/principal: insert path into the principal's per-action tries]
     Build --> Cross[verify cross-references]
     Cross --> Result[return LoadResult]
     Build -.warning.-> WSub[subsumed grant dropped]
@@ -764,7 +757,7 @@ flowchart TD
     Schema -.error.-> ESch[abort: invalid shape]
 ```
 
-**Fail-loud rules.** Unknown version, malformed JSON, bad action name, bad path syntax -- all abort the load. The server refuses to start with a broken policy. Never default-open.
+**Fail-loud rules.** Unknown version, malformed JSON, bad access code, bad path syntax -- all abort the load. The server refuses to start with a broken policy. Never default-open.
 
 **Warn-and-continue rules.** Subsumed grants, undefined-group references, principals with zero effective grants -- collected into `Warnings` alongside the otherwise-valid `LoadResult`.
 

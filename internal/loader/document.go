@@ -8,8 +8,10 @@ type policyDocument struct {
 }
 
 type repoDocument struct {
-	Principals map[string]principalGrantDocument `json:"principals"`
+	Paths map[string]pathACLDocument `json:"paths"`
 }
 
-// principalGrantDocument maps action name -> grant path patterns.
-type principalGrantDocument map[string][]string
+// pathACLDocument maps a principal ID -> SVN-style access code ("r", "w",
+// "rw"). The loader transposes this path-centric shape into the internal
+// per-principal tries. See docs/auth-design.md §10.2.
+type pathACLDocument map[string]string

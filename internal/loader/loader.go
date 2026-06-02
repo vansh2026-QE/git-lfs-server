@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/vansh2026/git-lfs-server/internal/policy"
@@ -50,20 +51,34 @@ func buildPolicy(doc *policyDocument) (*LoadResult, error) {
 	p := &policy.Policy{Repos: make(map[string]*policy.RepoPolicy, len(doc.Repos))}
 	for repoName, repoDoc := range doc.Repos {
 		rp := &policy.RepoPolicy{Principals: make(map[string]*policy.PrincipalGrants)}
-		for principal, grants := range repoDoc.Principals {
-			if err := validatePrincipalID(principal); err != nil {
+		// The file is path-centric, but the model is per-principal: transpose
+		// each (path, principal, access) row into the principal's per-action
+		// trie. Paths are walked in sorted order so subsumption warnings are
+		// deterministic regardless of JSON map ordering.
+		for _, path := range sortedKeys(repoDoc.Paths) {
+			if err := validateGrantPath(path); err != nil {
 				return nil, err
 			}
-			pg := &policy.PrincipalGrants{Tries: make(map[policy.Action]*policy.Trie)}
-			for actionName, paths := range grants {
-				action, err := parseAction(actionName)
-				if err != nil {
+			acl := repoDoc.Paths[path]
+			for _, principal := range sortedKeys(acl) {
+				if err := validatePrincipalID(principal); err != nil {
 					return nil, err
 				}
-				tr := policy.NewTrie()
-				for _, path := range paths {
-					if err := validateGrantPath(path); err != nil {
-						return nil, err
+				actions, err := parseAccess(acl[principal])
+				if err != nil {
+					return nil, fmt.Errorf("loader: repo %q path %q principal %q: %w",
+						repoName, path, principal, err)
+				}
+				pg := rp.Principals[principal]
+				if pg == nil {
+					pg = &policy.PrincipalGrants{Tries: make(map[policy.Action]*policy.Trie)}
+					rp.Principals[principal] = pg
+				}
+				for _, action := range actions {
+					tr := pg.Tries[action]
+					if tr == nil {
+						tr = policy.NewTrie()
+						pg.Tries[action] = tr
 					}
 					id := deriveGrantID(repoName, principal, action, path)
 					_, warn, err := tr.Insert(path, id)
@@ -75,9 +90,7 @@ func buildPolicy(doc *policyDocument) (*LoadResult, error) {
 						warnings = append(warnings, Warning{Message: warn})
 					}
 				}
-				pg.Tries[action] = tr
 			}
-			rp.Principals[principal] = pg
 		}
 		p.Repos[repoName] = rp
 	}
@@ -106,12 +119,25 @@ func deriveGrantID(repo, principal string, action policy.Action, path string) po
 func collectDeclaredGroups(doc *policyDocument) map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, repo := range doc.Repos {
-		for principal := range repo.Principals {
-			if strings.HasPrefix(principal, policy.PrincipalPrefixGroup) {
-				out[principal] = struct{}{} // insert the key in the map, the value itself is useless.
-				// struct {}{} takes 0 bytes.
+		for _, acl := range repo.Paths {
+			for principal := range acl {
+				if strings.HasPrefix(principal, policy.PrincipalPrefixGroup) {
+					out[principal] = struct{}{} // insert the key in the map, the value itself is useless.
+					// struct {}{} takes 0 bytes.
+				}
 			}
 		}
 	}
 	return out
+}
+
+// sortedKeys returns the keys of m in ascending order, used so map iteration
+// order does not affect trie population or warning emission.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

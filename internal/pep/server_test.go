@@ -18,15 +18,10 @@ const demoPolicy = `{
   "version": 1,
   "repos": {
     "demo": {
-      "principals": {
-        "user:alice": {
-          "upload":   ["public/**", "private/privAlice/**"],
-          "download": ["public/**", "private/privAlice/**"]
-        },
-        "user:bob": {
-          "upload":   ["public/**", "private/privBob/**"],
-          "download": ["public/**", "private/privBob/**"]
-        }
+      "paths": {
+        "public/**":            { "user:alice": "rw", "user:bob": "rw" },
+        "private/privAlice/**": { "user:alice": "rw" },
+        "private/privBob/**":   { "user:bob": "rw" }
       }
     }
   }

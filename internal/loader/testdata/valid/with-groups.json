@@ -6,19 +6,11 @@
   },
   "repos": {
     "myrepo": {
-      "principals": {
-        "user:alice": {
-          "upload": ["mine/**"],
-          "download": ["**"]
-        },
-        "group:engineers": {
-          "upload": ["src/**"],
-          "download": ["src/**", "docs/**"]
-        },
-        "group:admins": {
-          "upload": ["**"],
-          "download": ["**"]
-        }
+      "paths": {
+        "**":      { "user:alice": "r", "group:admins": "rw" },
+        "mine/**": { "user:alice": "rw" },
+        "src/**":  { "group:engineers": "rw" },
+        "docs/**": { "group:engineers": "r" }
       }
     }
   }

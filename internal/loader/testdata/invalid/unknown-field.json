@@ -2,10 +2,8 @@
   "version": 1,
   "repos": {
     "myrepo": {
-      "principal": {
-        "user:alice": {
-          "download": ["**"]
-        }
+      "path": {
+        "**": { "user:alice": "r" }
       }
     }
   }
