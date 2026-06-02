@@ -6,11 +6,13 @@
         "public/**": {
           "user:alice": "rw",
           "user:bob": "rw",
-          "user:vansh2026": "rw"
+          "user:vansh2026": "rw",
+	  "user:vanshpatel8999": "rw"
         },
         "private/privAlice/**": { "user:alice": "rw" },
         "private/privBob/**":   { "user:bob": "rw" },
-        "private/privVansh/**": { "user:vansh2026": "rw" }
+        "private/privVansh/**": { "user:vansh2026": "rw" },
+	"private/privVansh8999/**": {"user:vanshpatel8999": "rw"}
       }
     }
   }

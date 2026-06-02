@@ -50,7 +50,10 @@ func run(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	index := memstore.NewInMemoryPathIndex()
+	index, err := memstore.NewFilePathIndex(cfg.IndexPath)
+	if err != nil {
+		return fmt.Errorf("lfsd: load path index %q: %w", cfg.IndexPath, err)
+	}
 	audit := memstore.NewStderrAuditSink()
 
 	var handler http.Handler
@@ -81,8 +84,12 @@ func run(cfg Config) error {
 		return fmt.Errorf("lfsd: unknown storage backend %q (want local or s3)", cfg.StorageBackend)
 	}
 
-	log.Printf("lfsd: listening on %s (backend=%s auth=%s base-url=%s policy=%s)",
-		cfg.Addr, cfg.StorageBackend, cfg.AuthBackend, cfg.BaseURL, cfg.PolicyPath)
+	if len(cfg.CORSOrigins) > 0 {
+		handler = pep.CORS(cfg.CORSOrigins, handler)
+	}
+
+	log.Printf("lfsd: listening on %s (backend=%s auth=%s base-url=%s policy=%s index=%s cors=%v)",
+		cfg.Addr, cfg.StorageBackend, cfg.AuthBackend, cfg.BaseURL, cfg.PolicyPath, cfg.IndexPath, cfg.CORSOrigins)
 	return http.ListenAndServe(cfg.Addr, handler)
 }
 

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type Config struct {
 	BaseURL     string // public origin used to mint transfer hrefs
 	StorageRoot string // directory the BlobStore writes objects under (local backend)
 	PolicyPath  string // path to the JSON policy document
+	IndexPath   string // JSON file persisting the (repo, oid) -> paths index
 
 	// StorageBackend selects the object backend: "local" (on-disk BlobStore
 	// plus the open transfer endpoints) or "s3" (presigned direct-to-bucket
@@ -38,6 +40,11 @@ type Config struct {
 	// invalid, throttling repeated lookups for the same rejected token.
 	AuthCacheNegativeTTL time.Duration
 
+	// CORSOrigins is the allowlist of browser origins permitted to call lfsd
+	// cross-origin (e.g. the reviewer extension's "chrome-extension://<id>").
+	// Empty disables CORS. See docs/auth-design.md §4.1.1.
+	CORSOrigins []string
+
 	// S3 settings are used only when StorageBackend == "s3".
 	S3Bucket          string
 	S3Region          string
@@ -60,6 +67,7 @@ func parseConfig(args []string) (Config, error) {
 	fs.StringVar(&c.BaseURL, "base-url", envOr("LFSD_BASE_URL", "http://localhost:8080"), "public origin for minted transfer URLs")
 	fs.StringVar(&c.StorageRoot, "storage", envOr("LFSD_STORAGE", "./lfs-data"), "directory for stored objects (local backend)")
 	fs.StringVar(&c.PolicyPath, "policy", envOr("LFSD_POLICY", "examples/policy.json"), "path to the JSON policy document")
+	fs.StringVar(&c.IndexPath, "pathindex", envOr("LFSD_PATHINDEX", "./lfs-data/pathindex.json"), "JSON file persisting the (repo, oid) -> paths index")
 	fs.StringVar(&c.StorageBackend, "storage-backend", envOr("LFSD_STORAGE_BACKEND", "local"), "object backend: local or s3")
 	fs.StringVar(&c.AuthBackend, "auth-backend", envOr("LFSD_AUTH_BACKEND", "memory"), "authenticator: memory or gitlab")
 	fs.StringVar(&c.GitLabBaseURL, "gitlab-base-url", envOr("LFSD_GITLAB_BASE_URL", ""), "GitLab base URL for token validation (gitlab backend)")
@@ -73,10 +81,24 @@ func parseConfig(args []string) (Config, error) {
 	fs.BoolVar(&c.S3UsePathStyle, "s3-use-path-style", envBool("LFSD_S3_USE_PATH_STYLE", false), "use path-style addressing (required for MinIO)")
 	fs.StringVar(&c.S3Prefix, "s3-prefix", envOr("LFSD_S3_PREFIX", ""), "optional key prefix for stored objects")
 	fs.DurationVar(&c.URLExpiry, "url-expiry", envDur("LFSD_URL_EXPIRY", 10*time.Minute), "how long minted transfer URLs remain valid")
+	var corsRaw string
+	fs.StringVar(&corsRaw, "cors-origins", envOr("LFSD_CORS_ORIGINS", ""), "comma-separated browser origins allowed to call lfsd cross-origin (empty disables CORS)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
+	c.CORSOrigins = splitCSV(corsRaw)
 	return c, nil
+}
+
+// splitCSV splits a comma-separated list into trimmed, non-empty entries.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func envOr(key, def string) string {

@@ -152,7 +152,11 @@ type Authenticator interface {
 
 #### 4.1.1 Reviewer OAuth2 (GitLab extension)
 
-The reviewer authenticates from the GitLab extension using an OAuth2 access token, sent to lfsd as `Authorization: Bearer <token>`. lfsd's responsibility ends at validating that token (the `GitLabAuthenticator` path above); the OAuth2 authorization-code dance -- registering the GitLab OAuth application, redirect handling, refresh -- lives in the extension, not in lfsd. If the extension calls lfsd from a browser origin (rather than a backend), lfsd will need CORS handling (preflight + `Access-Control-Allow-Origin` for the extension's origin); this is not yet implemented and is gated on the extension's actual runtime context.
+The reviewer authenticates from the GitLab extension using an OAuth2 access token, sent to lfsd as `Authorization: Bearer <token>`. lfsd's responsibility ends at validating that token (the `GitLabAuthenticator` path above); the OAuth2 authorization-code + PKCE dance -- registering the GitLab OAuth application, redirect handling, refresh -- lives in the extension, not in lfsd.
+
+To dereference a pointer the extension calls `GET /{repo}/content?oid=<oid>&name=<path>` (local backend, `internal/pep/transfer.go`). This endpoint runs the full gate itself -- authenticate, `VerifyDownloadClaim`, then `policy.Decide` for `download` on the claimed path -- and streams the bytes only on permit, so it carries exactly the SF-1 (oid->path binding) protections the batch download path has. It is the authorized read path for the extension; the open `GET /{repo}/objects/{oid}` transfer URL is left unchanged as the demo capability URL.
+
+CORS is configurable via `LFSD_CORS_ORIGINS` (comma-separated allowlist, default empty/off). It is only needed when the extension fetches from a content-script context (which carries the page origin); fetches from a background service worker with `host_permissions` bypass CORS entirely. Credentials mode is not enabled because auth is a Bearer token, not cookies. See `docs/extension-integration.md` for the full extension contract.
 
 ### 4.2 PathIndex
 

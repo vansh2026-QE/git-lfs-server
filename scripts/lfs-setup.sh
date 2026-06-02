@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SERVER="http://localhost:8080"; REPO="demo"; USER=""; PASSWORD=""; ORIGIN=""
-NAME=""; EMAIL=""; FORK_LFS=""
+NAME=""; EMAIL=""; FORK_LFS=""; MERGE_DRIVER=""
 
 usage() {
   cat <<'EOF'
@@ -27,8 +27,11 @@ EOF
 }
 
 use_fork_lfs() {
-  local here bin
+  local here bin merge
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # Resolve the merge driver to an absolute path now, before any cd into a repo.
+  merge="$here/../client-implementation/git-lfs/contrib/lfs-text-merge.sh"
+  [ -f "$merge" ] && MERGE_DRIVER="$(cd "$(dirname "$merge")" && pwd)/$(basename "$merge")"
   bin="$here/../client-implementation/git-lfs/bin"
   if [ -x "$bin/git-lfs" ]; then
     export PATH="$(cd "$bin" && pwd):$PATH"
@@ -59,10 +62,25 @@ wire_fork_paths() {
 
 write_gitattributes() {
   cat > .gitattributes <<'EOF'
-* filter=lfs diff=lfs merge=lfs -text
+* filter=lfs diff=lfs merge=lfs-text -text
 .gitattributes !filter !diff !merge text
 .gitignore !filter !diff !merge text
 EOF
+}
+
+# wire_merge_driver registers the content-aware LFS merge driver (the script at
+# client-implementation/git-lfs/contrib/lfs-text-merge.sh) in repo-local config.
+# It materializes both LFS sides, runs a real 3-way text merge, and re-cleans
+# the result into a pointer. The committed .gitattributes opts paths in via
+# `merge=lfs-text`; the driver *definition* stays local because git refuses to
+# run driver commands defined in committed attributes.
+wire_merge_driver() {
+  if [ -z "$MERGE_DRIVER" ]; then
+    echo "warning: LFS merge driver not found; skipping merge-driver setup" >&2
+    return 0
+  fi
+  git config --local merge.lfs-text.name "LFS content-aware 3-way merge"
+  git config --local merge.lfs-text.driver "GIT_LFS='${FORK_LFS:-git-lfs}' '$MERGE_DRIVER' %O %A %B %L %P"
 }
 
 lfs_url_auth() {
@@ -104,6 +122,7 @@ case "$cmd" in
     git config lfs.skipdownloaderrorcodes 403
     git lfs install --local >/dev/null
     wire_fork_paths
+    wire_merge_driver
     set_identity
     write_gitattributes
     git add .gitattributes
@@ -118,6 +137,7 @@ case "$cmd" in
     cd "${DIR:-$(basename "${REMOTE%.git}")}"
     git lfs install --local >/dev/null
     wire_fork_paths
+    wire_merge_driver
     { [ -n "$NAME" ] || [ -n "$EMAIL" ]; } && set_identity
     echo "Cloned into $(pwd), wired to $(git config lfs.url | sed -E 's#://[^@]*@#://#')."
     ;;

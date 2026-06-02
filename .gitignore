@@ -2,3 +2,4 @@
 client-implementation/
 anchor-lfs-clone/
 lfsd.env
+lfs-data/
