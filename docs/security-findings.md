@@ -65,3 +65,32 @@ alone poisons the index — no byte transfer required.
    an OID already introduced by someone else does not auto-authorize.
 3. **Deny + audit** any upload whose OID already exists under a different
    path/owner, rather than silently adding a binding.
+
+## SF-2: GitLab token handling (`internal/gitlabauth`)
+
+**Status:** documented posture for the GitLab `Authenticator`.
+
+### Token handling
+
+- **No raw tokens at rest in memory.** The validation cache is keyed by a
+  SHA-256 digest of the token (`cache.go`, `cacheKey`); the raw PAT/OAuth2
+  token is never used as a map key and never stored in a cache entry.
+- **No tokens in logs.** Tokens are not logged on success or failure. Validator
+  errors carry GitLab status codes, not credentials. Keep it that way when
+  adding diagnostics.
+- **Fail closed.** A rejected token (`401/403`) and any infrastructure failure
+  reaching GitLab both resolve to HTTP 401; lfsd never falls back to anonymous
+  on an *attempted* authentication.
+
+### Residual considerations (accepted for now)
+
+1. **Revocation lag.** A token revoked in GitLab stays usable until its cached
+   entry expires (`-auth-cache-ttl`, default 5m). Lower the TTL where prompt
+   revocation matters; the cost is more `GET /api/v4/user` round-trips.
+2. **Negative-cache window.** A token rejected once is treated as invalid for
+   `-auth-cache-negative-ttl` (default 30s) even if it becomes valid in that
+   window; this throttles lookups for bad tokens at the cost of a short delay
+   before a freshly valid token is accepted.
+3. **Transport security.** Tokens travel as a Bearer header or Basic password;
+   lfsd must be fronted by TLS in any non-loopback deployment so they are not
+   exposed on the wire.

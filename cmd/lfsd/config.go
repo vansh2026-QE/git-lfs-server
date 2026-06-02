@@ -21,6 +21,23 @@ type Config struct {
 	// transfers; no BlobStore, no transfer endpoints).
 	StorageBackend string
 
+	// AuthBackend selects the Authenticator: "memory" (static demo creds, the
+	// default) or "gitlab" (validate PAT/OAuth2 tokens against a GitLab
+	// instance). See docs/auth-design.md §4.1.
+	AuthBackend string
+
+	// GitLabBaseURL is the GitLab instance lfsd validates tokens against, e.g.
+	// "https://gitlab.example.com". Used only when AuthBackend == "gitlab".
+	GitLabBaseURL string
+
+	// AuthCacheTTL bounds how long a successfully resolved token -> Subject
+	// stays cached before lfsd re-validates against GitLab.
+	AuthCacheTTL time.Duration
+
+	// AuthCacheNegativeTTL bounds how long a known-bad token is remembered as
+	// invalid, throttling repeated lookups for the same rejected token.
+	AuthCacheNegativeTTL time.Duration
+
 	// S3 settings are used only when StorageBackend == "s3".
 	S3Bucket          string
 	S3Region          string
@@ -44,6 +61,10 @@ func parseConfig(args []string) (Config, error) {
 	fs.StringVar(&c.StorageRoot, "storage", envOr("LFSD_STORAGE", "./lfs-data"), "directory for stored objects (local backend)")
 	fs.StringVar(&c.PolicyPath, "policy", envOr("LFSD_POLICY", "examples/policy.json"), "path to the JSON policy document")
 	fs.StringVar(&c.StorageBackend, "storage-backend", envOr("LFSD_STORAGE_BACKEND", "local"), "object backend: local or s3")
+	fs.StringVar(&c.AuthBackend, "auth-backend", envOr("LFSD_AUTH_BACKEND", "memory"), "authenticator: memory or gitlab")
+	fs.StringVar(&c.GitLabBaseURL, "gitlab-base-url", envOr("LFSD_GITLAB_BASE_URL", ""), "GitLab base URL for token validation (gitlab backend)")
+	fs.DurationVar(&c.AuthCacheTTL, "auth-cache-ttl", envDur("LFSD_AUTH_CACHE_TTL", 5*time.Minute), "how long a resolved token stays cached (gitlab backend)")
+	fs.DurationVar(&c.AuthCacheNegativeTTL, "auth-cache-negative-ttl", envDur("LFSD_AUTH_CACHE_NEGATIVE_TTL", 30*time.Second), "how long a rejected token is cached as invalid (gitlab backend)")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", envOr("LFSD_S3_BUCKET", "lfs-objects"), "S3 bucket name")
 	fs.StringVar(&c.S3Region, "s3-region", envOr("LFSD_S3_REGION", "us-east-1"), "S3 region (any non-empty value for MinIO)")
 	fs.StringVar(&c.S3Endpoint, "s3-endpoint", envOr("LFSD_S3_ENDPOINT", ""), "custom S3 endpoint for MinIO/R2; empty for AWS")

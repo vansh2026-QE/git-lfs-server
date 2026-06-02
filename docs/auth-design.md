@@ -141,7 +141,18 @@ type Authenticator interface {
 
 **In-memory implementation (v1).** `InMemoryAuthenticator` matches HTTP Basic credentials against a static `map[string]userRecord` populated at startup. Each record carries the user's group memberships verbatim.
 
-**Deferred.** OAuth/JWT authenticator that resolves token claims to user + groups via an identity provider. mTLS authenticator that maps client cert subject DN to principal.
+**GitLab implementation (`internal/gitlabauth`).** `GitLabAuthenticator` validates GitLab tokens against a live instance and is selected with `-auth-backend gitlab -gitlab-base-url <url>`. It accepts a token from either transport and resolves it to a user-only `Subject`:
+
+- **Transport.** An `Authorization: Bearer <token>` header (reviewer OAuth2 access token, see §4.1.1) takes precedence; otherwise the HTTP Basic *password* is taken as the token (CLI Personal Access Token, delivered by git's credential helper). The Basic *username* is ignored by convention.
+- **Validation.** The raw token is sent to `GET {base}/api/v4/user` as a Bearer credential; GitLab accepts both PATs and OAuth2 access tokens this way. `200` -> `Subject{Principals: ["user:<username>"]}`; `401/403` -> 401 to the client; transport/5xx failures fail closed (also 401).
+- **Caching.** Resolved identities are cached for `-auth-cache-ttl` (default 5m) and rejected tokens for `-auth-cache-negative-ttl` (default 30s), keyed by a SHA-256 digest of the token so raw tokens are never held in memory or logged.
+- **Mapping.** User-only for now: `user:<gitlab-username>`, no group derivation. GitLab group membership -> `group:` principals is a later iteration (§13).
+
+**Deferred.** Group derivation from GitLab membership. mTLS authenticator that maps client cert subject DN to principal.
+
+#### 4.1.1 Reviewer OAuth2 (GitLab extension)
+
+The reviewer authenticates from the GitLab extension using an OAuth2 access token, sent to lfsd as `Authorization: Bearer <token>`. lfsd's responsibility ends at validating that token (the `GitLabAuthenticator` path above); the OAuth2 authorization-code dance -- registering the GitLab OAuth application, redirect handling, refresh -- lives in the extension, not in lfsd. If the extension calls lfsd from a browser origin (rather than a backend), lfsd will need CORS handling (preflight + `Access-Control-Allow-Origin` for the extension's origin); this is not yet implemented and is gated on the extension's actual runtime context.
 
 ### 4.2 PathIndex
 
@@ -912,7 +923,7 @@ A fleet of valid and invalid policy files under `testdata/`. Each has a correspo
 | JSON Schema file | Nice-to-have for CI validation and editor support. Not required for v1. | When the format settles; bundle with the first non-v1 schema bump. |
 | Production storage backends | Postgres `PathIndex`, S3 `ObjectStore`, OTel `AuditSink`, OAuth `Authenticator`. Each is a separate adapter PR. | After the core is in place and being exercised. |
 | Encryption at rest, audit retention, locks API | Cross-referenced to [docs/proposals/components.md](docs/proposals/components.md) section 7. | Per the prioritization in that doc. |
-| Seamless mixed-access checkout | The forked client already maps a per-object download `403` to a `DownloadDeclinedError` and re-emits the pointer (see `tq/transfer_queue.go` `shouldTreatAsDeclined` and `commands/command_smudge.go`), gated on `lfs.skipdownloaderrorcodes`; the server already returns `403` on a download denial (`internal/pep/enforcer.go`). What's missing is wiring standard LFS endpoint discovery + a git credential helper and shipping the `403` skip-code as a default, so a bare `git clone`/`pull` materializes authorized objects and silently leaves denied ones as pointers. Files a user cannot read necessarily remain pointer files in the tree — inherent to path-level read policy within one repo. | When the real `Authenticator` + endpoint discovery land. |
+| Seamless mixed-access checkout | The forked client already maps a per-object download `403` to a `DownloadDeclinedError` and re-emits the pointer (see `tq/transfer_queue.go` `shouldTreatAsDeclined` and `commands/command_smudge.go`), gated on `lfs.skipdownloaderrorcodes`; the server already returns `403` on a download denial (`internal/pep/enforcer.go`). The real `Authenticator` has now landed (`internal/gitlabauth`, §4.1): the `gitlab` backend makes auth mandatory and answers an uncredentialed batch with `401 WWW-Authenticate: Basic`, so git invokes its credential helper and the CLI PAT flows in as the Basic password. What's still missing is wiring standard LFS endpoint discovery and shipping the `403` skip-code as a default, so a bare `git clone`/`pull` materializes authorized objects and silently leaves denied ones as pointers. Files a user cannot read necessarily remain pointer files in the tree — inherent to path-level read policy within one repo. | When LFS endpoint discovery + the skip-code default land. |
 
 ## 14. Implementation order (auth-specific)
 

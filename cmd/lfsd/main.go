@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/vansh2026/git-lfs-server/internal/gitlabauth"
 	"github.com/vansh2026/git-lfs-server/internal/loader"
 	"github.com/vansh2026/git-lfs-server/internal/memstore"
 	"github.com/vansh2026/git-lfs-server/internal/pep"
+	"github.com/vansh2026/git-lfs-server/internal/ports"
 	"github.com/vansh2026/git-lfs-server/internal/s3store"
 )
 
@@ -44,12 +46,10 @@ func run(cfg Config) error {
 		log.Printf("lfsd: policy warning: %s", w.Message)
 	}
 
-	// Demo credentials. A real deployment swaps this Authenticator for an
-	// OAuth/mTLS adapter without touching the PEP.
-	auth := memstore.NewInMemoryAuthenticator(map[string]memstore.UserRecord{
-		"alice": {Password: "alicepw"},
-		"bob":   {Password: "bobpw"},
-	})
+	auth, requireAuth, err := buildAuthenticator(cfg)
+	if err != nil {
+		return err
+	}
 	index := memstore.NewInMemoryPathIndex()
 	audit := memstore.NewStderrAuditSink()
 
@@ -58,6 +58,7 @@ func run(cfg Config) error {
 	case "local":
 		store := memstore.NewLocalFSObjectStore(cfg.StorageRoot, cfg.BaseURL)
 		srv := pep.NewServer(auth, index, store, audit, res.Policy)
+		srv.SetRequireAuth(requireAuth)
 		handler = pep.NewLocalServer(srv, store)
 	case "s3":
 		store, serr := s3store.New(context.Background(), s3store.Config{
@@ -73,12 +74,35 @@ func run(cfg Config) error {
 		if serr != nil {
 			return serr
 		}
-		handler = pep.NewServer(auth, index, store, audit, res.Policy)
+		srv := pep.NewServer(auth, index, store, audit, res.Policy)
+		srv.SetRequireAuth(requireAuth)
+		handler = srv
 	default:
 		return fmt.Errorf("lfsd: unknown storage backend %q (want local or s3)", cfg.StorageBackend)
 	}
 
-	log.Printf("lfsd: listening on %s (backend=%s base-url=%s policy=%s)",
-		cfg.Addr, cfg.StorageBackend, cfg.BaseURL, cfg.PolicyPath)
+	log.Printf("lfsd: listening on %s (backend=%s auth=%s base-url=%s policy=%s)",
+		cfg.Addr, cfg.StorageBackend, cfg.AuthBackend, cfg.BaseURL, cfg.PolicyPath)
 	return http.ListenAndServe(cfg.Addr, handler)
+}
+
+// buildAuthenticator selects the Authenticator from config. The "memory"
+// backend keeps the open demo credentials (anonymous allowed, policy decides);
+// the "gitlab" backend validates PAT/OAuth2 tokens and makes auth mandatory so
+// git-lfs is prompted for credentials. See docs/auth-design.md §4.1 and §7.
+func buildAuthenticator(cfg Config) (auth ports.Authenticator, requireAuth bool, err error) {
+	switch cfg.AuthBackend {
+	case "memory":
+		return memstore.NewInMemoryAuthenticator(map[string]memstore.UserRecord{
+			"alice": {Password: "alicepw"},
+			"bob":   {Password: "bobpw"},
+		}), false, nil
+	case "gitlab":
+		if cfg.GitLabBaseURL == "" {
+			return nil, false, fmt.Errorf("lfsd: auth-backend gitlab requires -gitlab-base-url")
+		}
+		return gitlabauth.New(cfg.GitLabBaseURL, cfg.AuthCacheTTL, cfg.AuthCacheNegativeTTL), true, nil
+	default:
+		return nil, false, fmt.Errorf("lfsd: unknown auth backend %q (want memory or gitlab)", cfg.AuthBackend)
+	}
 }

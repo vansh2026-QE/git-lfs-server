@@ -24,6 +24,11 @@ type Server struct {
 	audit  ports.AuditSink
 	policy atomic.Pointer[policy.Policy]
 	mux    *http.ServeMux
+
+	// requireAuth, when set, rejects the anonymous subject with a 401 carrying
+	// a WWW-Authenticate challenge so git-lfs invokes its credential helper.
+	// Left false for the open demo backend. See docs/auth-design.md §7.
+	requireAuth bool
 }
 
 // NewServer wires the adapters and an initial policy snapshot. The policy is
@@ -42,6 +47,11 @@ func NewServer(auth ports.Authenticator, index ports.PathIndex, store ports.Obje
 // SetPolicy atomically replaces the active policy snapshot.
 func (s *Server) SetPolicy(pol *policy.Policy) { s.policy.Store(pol) }
 
+// SetRequireAuth toggles mandatory authentication. When enabled, a request
+// resolving to the anonymous subject is rejected with 401 + WWW-Authenticate
+// instead of being run through the policy as anonymous.
+func (s *Server) SetRequireAuth(v bool) { s.requireAuth = v }
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
 // batchHandler implements POST /{repo}/objects/batch: authenticate -> parse ->
@@ -50,7 +60,11 @@ func (s *Server) batchHandler(w http.ResponseWriter, r *http.Request) {
 	repo := r.PathValue("repo")
 	subject, err := s.auth.Authenticate(r)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		s.writeUnauthorized(w)
+		return
+	}
+	if s.requireAuth && isAnonymous(subject) {
+		s.writeUnauthorized(w)
 		return
 	}
 	br, err := ParseBatchRequest(r)
@@ -191,6 +205,22 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"message": msg})
+}
+
+// writeUnauthorized returns 401. When auth is mandatory it adds a Basic
+// challenge so git-lfs invokes its credential helper (CLI PAT delivered as the
+// Basic password). See docs/auth-design.md §7.
+func (s *Server) writeUnauthorized(w http.ResponseWriter) {
+	if s.requireAuth {
+		w.Header().Set("WWW-Authenticate", `Basic realm="Git LFS"`)
+	}
+	writeError(w, http.StatusUnauthorized, "unauthorized")
+}
+
+// isAnonymous reports whether a resolved Subject carries no real identity.
+func isAnonymous(sub policy.Subject) bool {
+	return len(sub.Principals) == 0 ||
+		(len(sub.Principals) == 1 && sub.Principals[0] == policy.PrincipalAnonymous)
 }
 
 var _ http.Handler = (*Server)(nil)

@@ -10,6 +10,10 @@
         "user:bob": {
           "upload":   ["public/**", "private/privBob/**"],
           "download": ["public/**", "private/privBob/**"]
+        },
+        "user:vansh2026": {
+          "upload":   ["public/**", "private/privVansh/**"],
+          "download": ["public/**", "private/privVansh/**"]
         }
       }
     }
