@@ -1,6 +1,8 @@
 package pep
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -18,12 +20,13 @@ const lfsContentType = "application/vnd.git-lfs+json"
 // Server is the HTTP boundary for the LFS Batch API. It wires the ports
 // together and holds the active policy snapshot. See docs/auth-design.md §8.
 type Server struct {
-	auth   ports.Authenticator
-	index  ports.PathIndex
-	store  ports.ObjectStore
-	audit  ports.AuditSink
-	policy atomic.Pointer[policy.Policy]
-	mux    *http.ServeMux
+	auth     ports.Authenticator
+	index    ports.PathIndex
+	store    ports.ObjectStore
+	msgStore ports.MessageStore
+	audit    ports.AuditSink
+	policy   atomic.Pointer[policy.Policy]
+	mux      *http.ServeMux
 
 	// requireAuth, when set, rejects the anonymous subject with a 401 carrying
 	// a WWW-Authenticate challenge so git-lfs invokes its credential helper.
@@ -40,6 +43,8 @@ func NewServer(auth ports.Authenticator, index ports.PathIndex, store ports.Obje
 	s.policy.Store(pol)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /{repo}/objects/batch", s.batchHandler)
+	mux.HandleFunc("GET /{repo}/message", s.handleMessageRead)
+	mux.HandleFunc("POST /{repo}/message", s.handleMessageRecord)
 	s.mux = mux
 	return s
 }
@@ -51,6 +56,10 @@ func (s *Server) SetPolicy(pol *policy.Policy) { s.policy.Store(pol) }
 // resolving to the anonymous subject is rejected with 401 + WWW-Authenticate
 // instead of being run through the policy as anonymous.
 func (s *Server) SetRequireAuth(v bool) { s.requireAuth = v }
+
+// SetMessageStore enables the redacted commit-message endpoints. Left nil for
+// deployments that don't use message hiding; the message routes then return 404.
+func (s *Server) SetMessageStore(ms ports.MessageStore) { s.msgStore = ms }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
@@ -178,6 +187,133 @@ func (s *Server) recordAudit(r *http.Request, subject policy.Subject, repo strin
 		entry.Reason = oc.Decision.Reason
 	}
 	s.audit.Record(entry)
+}
+
+// handleMessageRead implements GET /{repo}/message?oid=<oid>: it authenticates
+// the reader, looks up the path set the commit touched, and streams the real
+// message only if the reader may download EVERY bound path (all-paths
+// visibility via policy.DecideAllPaths). The reader supplies only the oid; the
+// bound paths come from the store, so the read cannot be narrowed to bypass the
+// gate (cf. SF-1). See docs/extension-integration.md.
+func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
+	if s.msgStore == nil {
+		writeError(w, http.StatusNotFound, "message store not configured")
+		return
+	}
+	repo := r.PathValue("repo")
+	subject, err := s.auth.Authenticate(r)
+	if err != nil {
+		s.writeUnauthorized(w)
+		return
+	}
+	if s.requireAuth && isAnonymous(subject) {
+		s.writeUnauthorized(w)
+		return
+	}
+	oid := r.URL.Query().Get("oid")
+	if oid == "" {
+		writeError(w, http.StatusBadRequest, "missing oid")
+		return
+	}
+	paths, err := s.msgStore.BoundPaths(repo, oid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if len(paths) == 0 {
+		writeError(w, http.StatusNotFound, "no message recorded for oid")
+		return
+	}
+	decision, denied := policy.DecideAllPaths(s.policy.Load(), subject, policy.ActionDownload, repo, paths)
+	s.recordMessageAudit(r, subject, "message-read", repo, oid, decision, denied)
+	if decision.Effect != policy.Permit {
+		writeError(w, http.StatusForbidden, "message hidden by policy")
+		return
+	}
+	msg, err := s.msgStore.Message(repo, oid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if msg == nil {
+		writeError(w, http.StatusNotFound, "no message recorded for oid")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(msg)
+}
+
+// recordMessageAudit logs a message-read decision, attributing a denial to the
+// first bound path that failed the all-paths check.
+func (s *Server) recordMessageAudit(r *http.Request, subject policy.Subject, action, repo, oid string, d policy.Decision, deniedPath string) {
+	s.audit.Record(ports.AuditEntry{
+		Timestamp: time.Now().UTC(),
+		RequestID: r.Header.Get("X-Request-Id"),
+		Subject:   primaryPrincipal(subject),
+		Action:    action,
+		Repo:      repo,
+		Path:      deniedPath,
+		OID:       oid,
+		Effect:    d.Effect.String(),
+		Source:    d.Source,
+		Reason:    d.Reason,
+	})
+}
+
+// messageRecordRequest is the pre-push payload that binds a redacted commit
+// message to the paths its commit touched. OID must be the sha256 of Message.
+type messageRecordRequest struct {
+	OID     string   `json:"oid"`
+	Paths   []string `json:"paths"`
+	Message string   `json:"message"`
+}
+
+// handleMessageRecord implements POST /{repo}/message: the client uploads the
+// real commit message (kept out of the commit object, which carries only the
+// "msg:<oid>" placeholder) at push time. The caller must be permitted to upload
+// EVERY bound path, and the oid must match the message digest, before the
+// binding is stored. See docs/extension-integration.md.
+func (s *Server) handleMessageRecord(w http.ResponseWriter, r *http.Request) {
+	if s.msgStore == nil {
+		writeError(w, http.StatusNotFound, "message store not configured")
+		return
+	}
+	repo := r.PathValue("repo")
+	subject, err := s.auth.Authenticate(r)
+	if err != nil {
+		s.writeUnauthorized(w)
+		return
+	}
+	if s.requireAuth && isAnonymous(subject) {
+		s.writeUnauthorized(w)
+		return
+	}
+	var req messageRecordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.OID == "" || len(req.Paths) == 0 {
+		writeError(w, http.StatusBadRequest, "oid and paths are required")
+		return
+	}
+	sum := sha256.Sum256([]byte(req.Message))
+	if hex.EncodeToString(sum[:]) != req.OID {
+		writeError(w, http.StatusBadRequest, "oid does not match message digest")
+		return
+	}
+	decision, denied := policy.DecideAllPaths(s.policy.Load(), subject, policy.ActionUpload, repo, req.Paths)
+	s.recordMessageAudit(r, subject, "message-record", repo, req.OID, decision, denied)
+	if decision.Effect != policy.Permit {
+		writeError(w, http.StatusForbidden, "message record denied by policy")
+		return
+	}
+	if err := s.msgStore.Put(repo, req.OID, req.Paths, []byte(req.Message)); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"oid": req.OID})
 }
 
 func primaryPrincipal(sub policy.Subject) string {

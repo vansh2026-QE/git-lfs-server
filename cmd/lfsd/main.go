@@ -55,6 +55,10 @@ func run(cfg Config) error {
 		return fmt.Errorf("lfsd: load path index %q: %w", cfg.IndexPath, err)
 	}
 	audit := memstore.NewStderrAuditSink()
+	messages, err := memstore.NewFileMessageStore(cfg.MessagePath)
+	if err != nil {
+		return fmt.Errorf("lfsd: load message store %q: %w", cfg.MessagePath, err)
+	}
 
 	var handler http.Handler
 	switch cfg.StorageBackend {
@@ -62,6 +66,7 @@ func run(cfg Config) error {
 		store := memstore.NewLocalFSObjectStore(cfg.StorageRoot, cfg.BaseURL)
 		srv := pep.NewServer(auth, index, store, audit, res.Policy)
 		srv.SetRequireAuth(requireAuth)
+		srv.SetMessageStore(messages)
 		handler = pep.NewLocalServer(srv, store)
 	case "s3":
 		store, serr := s3store.New(context.Background(), s3store.Config{
@@ -79,6 +84,7 @@ func run(cfg Config) error {
 		}
 		srv := pep.NewServer(auth, index, store, audit, res.Policy)
 		srv.SetRequireAuth(requireAuth)
+		srv.SetMessageStore(messages)
 		handler = srv
 	default:
 		return fmt.Errorf("lfsd: unknown storage backend %q (want local or s3)", cfg.StorageBackend)
@@ -88,8 +94,8 @@ func run(cfg Config) error {
 		handler = pep.CORS(cfg.CORSOrigins, handler)
 	}
 
-	log.Printf("lfsd: listening on %s (backend=%s auth=%s base-url=%s policy=%s index=%s cors=%v)",
-		cfg.Addr, cfg.StorageBackend, cfg.AuthBackend, cfg.BaseURL, cfg.PolicyPath, cfg.IndexPath, cfg.CORSOrigins)
+	log.Printf("lfsd: listening on %s (backend=%s auth=%s base-url=%s policy=%s index=%s messages=%s cors=%v)",
+		cfg.Addr, cfg.StorageBackend, cfg.AuthBackend, cfg.BaseURL, cfg.PolicyPath, cfg.IndexPath, cfg.MessagePath, cfg.CORSOrigins)
 	return http.ListenAndServe(cfg.Addr, handler)
 }
 

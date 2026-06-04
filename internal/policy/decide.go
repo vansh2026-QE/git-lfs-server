@@ -32,3 +32,28 @@ func Decide(p *Policy, req Request) Decision {
 	}
 	return Decision{Effect: Deny, Reason: "no grant matched any principal"}
 }
+
+// DecideAllPaths authorizes an action over a set of paths under all-paths
+// semantics: it returns Permit only when Decide permits every path for the
+// subject. The first denied path short-circuits and is returned alongside its
+// Deny decision so the caller can attribute the refusal in a 403/audit line.
+// An empty path set fails closed. It composes Decide and is likewise pure:
+// no I/O, no globals, never panics on input. Used to gate reads of a redacted
+// commit message bound to every path its commit touched (all-paths
+// visibility). See docs/auth-design.md §5.
+func DecideAllPaths(p *Policy, subj Subject, action Action, repo string, paths []string) (decision Decision, deniedPath string) {
+	if len(paths) == 0 {
+		return Decision{Effect: Deny, Reason: "no paths bound"}, ""
+	}
+	for _, path := range paths {
+		d := Decide(p, Request{
+			Subject:  subj,
+			Action:   action,
+			Resource: Resource{Repo: repo, Path: path},
+		})
+		if d.Effect != Permit {
+			return d, path
+		}
+	}
+	return Decision{Effect: Permit, Reason: "permitted on all bound paths"}, ""
+}

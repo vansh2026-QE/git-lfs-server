@@ -17,6 +17,7 @@ type Config struct {
 	StorageRoot string // directory the BlobStore writes objects under (local backend)
 	PolicyPath  string // path to the JSON policy document
 	IndexPath   string // JSON file persisting the (repo, oid) -> paths index
+	MessagePath string // JSON file persisting redacted commit messages + bound paths
 
 	// StorageBackend selects the object backend: "local" (on-disk BlobStore
 	// plus the open transfer endpoints) or "s3" (presigned direct-to-bucket
@@ -68,6 +69,7 @@ func parseConfig(args []string) (Config, error) {
 	fs.StringVar(&c.StorageRoot, "storage", envOr("LFSD_STORAGE", "./lfs-data"), "directory for stored objects (local backend)")
 	fs.StringVar(&c.PolicyPath, "policy", envOr("LFSD_POLICY", "examples/policy.json"), "path to the JSON policy document")
 	fs.StringVar(&c.IndexPath, "pathindex", envOr("LFSD_PATHINDEX", "./lfs-data/pathindex.json"), "JSON file persisting the (repo, oid) -> paths index")
+	fs.StringVar(&c.MessagePath, "messages", envOr("LFSD_MESSAGES", "./lfs-data/messages.json"), "JSON file persisting redacted commit messages and their bound paths")
 	fs.StringVar(&c.StorageBackend, "storage-backend", envOr("LFSD_STORAGE_BACKEND", "local"), "object backend: local or s3")
 	fs.StringVar(&c.AuthBackend, "auth-backend", envOr("LFSD_AUTH_BACKEND", "memory"), "authenticator: memory or gitlab")
 	fs.StringVar(&c.GitLabBaseURL, "gitlab-base-url", envOr("LFSD_GITLAB_BASE_URL", ""), "GitLab base URL for token validation (gitlab backend)")

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SERVER="http://localhost:8080"; REPO="demo"; USER=""; PASSWORD=""; ORIGIN=""
-NAME=""; EMAIL=""; FORK_LFS=""; MERGE_DRIVER=""
+NAME=""; EMAIL=""; FORK_LFS=""; MERGE_DRIVER=""; DIFF_DRIVER=""; MSG_REDACT=""; MSG_PUSH=""
 
 usage() {
   cat <<'EOF'
@@ -27,11 +27,17 @@ EOF
 }
 
 use_fork_lfs() {
-  local here bin merge
+  local here bin merge diff
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  # Resolve the merge driver to an absolute path now, before any cd into a repo.
+  # Resolve the merge/diff drivers to absolute paths now, before any cd into a repo.
   merge="$here/../client-implementation/git-lfs/contrib/lfs-text-merge.sh"
   [ -f "$merge" ] && MERGE_DRIVER="$(cd "$(dirname "$merge")" && pwd)/$(basename "$merge")"
+  diff="$here/../client-implementation/git-lfs/contrib/lfs-text-diff.sh"
+  [ -f "$diff" ] && DIFF_DRIVER="$(cd "$(dirname "$diff")" && pwd)/$(basename "$diff")"
+  redact="$here/../client-implementation/git-lfs/contrib/redact-commit-msg.sh"
+  [ -f "$redact" ] && MSG_REDACT="$(cd "$(dirname "$redact")" && pwd)/$(basename "$redact")"
+  msgpush="$here/../client-implementation/git-lfs/contrib/lfs-msg-push.sh"
+  [ -f "$msgpush" ] && MSG_PUSH="$(cd "$(dirname "$msgpush")" && pwd)/$(basename "$msgpush")"
   bin="$here/../client-implementation/git-lfs/bin"
   if [ -x "$bin/git-lfs" ]; then
     export PATH="$(cd "$bin" && pwd):$PATH"
@@ -54,10 +60,23 @@ wire_fork_paths() {
   git config --local filter.lfs.smudge   "$FORK_LFS smudge -- %f"
   git config --local filter.lfs.required true
   local hooks h; hooks="$(git rev-parse --git-path hooks)"; mkdir -p "$hooks"
-  for h in pre-push post-checkout post-commit post-merge; do
+  for h in post-checkout post-commit post-merge; do
     printf '#!/bin/sh\n"%s" %s "$@"\n' "$FORK_LFS" "$h" > "$hooks/$h"
     chmod +x "$hooks/$h"
   done
+  # pre-push: upload cached commit messages (fail closed), then run git-lfs.
+  if [ -n "$MSG_PUSH" ]; then
+    printf '#!/bin/sh\n"%s" "$@" || exit $?\nexec "%s" pre-push "$@"\n' "$MSG_PUSH" "$FORK_LFS" > "$hooks/pre-push"
+  else
+    printf '#!/bin/sh\n"%s" pre-push "$@"\n' "$FORK_LFS" > "$hooks/pre-push"
+  fi
+  chmod +x "$hooks/pre-push"
+  # commit-msg: redact the real message to a "msg:<oid>" placeholder, caching
+  # the real text under .git/lfs-msgs for the pre-push uploader.
+  if [ -n "$MSG_REDACT" ]; then
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$MSG_REDACT" > "$hooks/commit-msg"
+    chmod +x "$hooks/commit-msg"
+  fi
 }
 
 write_gitattributes() {
@@ -81,6 +100,20 @@ wire_merge_driver() {
   fi
   git config --local merge.lfs-text.name "LFS content-aware 3-way merge"
   git config --local merge.lfs-text.driver "GIT_LFS='${FORK_LFS:-git-lfs}' '$MERGE_DRIVER' %O %A %B %L %P"
+}
+
+# wire_diff_driver registers the LFS textconv diff driver (lfs-text-diff.sh) in
+# repo-local config. The committed .gitattributes opts paths in via `diff=lfs`;
+# the textconv *definition* stays local (same reason as the merge driver). With
+# it, `git diff`/`log -p`/`show` compare smudged content instead of pointer
+# stubs. cachetextconv caches converted blobs so repeated diffs stay fast.
+wire_diff_driver() {
+  if [ -z "$DIFF_DRIVER" ]; then
+    echo "warning: LFS diff driver not found; skipping diff-driver setup" >&2
+    return 0
+  fi
+  git config --local diff.lfs.textconv "GIT_LFS='${FORK_LFS:-git-lfs}' '$DIFF_DRIVER'"
+  git config --local diff.lfs.cachetextconv true
 }
 
 lfs_url_auth() {
@@ -123,6 +156,7 @@ case "$cmd" in
     git lfs install --local >/dev/null
     wire_fork_paths
     wire_merge_driver
+    wire_diff_driver
     set_identity
     write_gitattributes
     git add .gitattributes
@@ -138,6 +172,7 @@ case "$cmd" in
     git lfs install --local >/dev/null
     wire_fork_paths
     wire_merge_driver
+    wire_diff_driver
     { [ -n "$NAME" ] || [ -n "$EMAIL" ]; } && set_identity
     echo "Cloned into $(pwd), wired to $(git config lfs.url | sed -E 's#://[^@]*@#://#')."
     ;;

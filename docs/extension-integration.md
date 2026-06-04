@@ -59,6 +59,60 @@ For a **diff**, the extension fetches the base and head blobs (two calls with th
 two commits' pointer oids) and diffs the text itself; there is no server-side
 differ.
 
+## Commit-message endpoint
+
+Redacted commit messages are hidden the same way as file contents: the commit
+object on GitLab carries only a placeholder, and the real message is served by
+`lfsd` behind the path policy. Unlike `/content`, the message store is
+independent of the storage backend, so this endpoint is available on both the
+`local` and `s3` deployments.
+
+### Placeholder format
+
+A redacted commit message is a single line in the commit object:
+
+```
+[redacted] msg:<oid>
+```
+
+- `<oid>` is the sha256 (64 hex chars) of the original message bytes.
+- The extension scans commit/MR message text for `msg:([0-9a-f]{64})` and
+  replaces the placeholder with the rehydrated message.
+
+### Read (extension)
+
+```
+GET /{repo}/message?oid=<oid>
+Authorization: Bearer <gitlab-oauth2-or-pat-token>
+```
+
+Authorized under **all-paths visibility**: the reader must be permitted to
+`download` *every* path the commit touched. The reader supplies only the `oid`;
+the bound path set is recorded server-side and cannot be narrowed, so the same
+binding protection as `/content` applies (cf. SF-1).
+
+| Status | Meaning |
+| ------ | ------- |
+| `200`  | The message bytes (`text/plain; charset=utf-8`). |
+| `400`  | Missing `oid`. |
+| `401`  | Missing/invalid token. |
+| `403`  | Policy denies `download` on at least one bound path. |
+| `404`  | No message recorded for that `oid`. |
+
+### Record (client, not the extension)
+
+```
+POST /{repo}/message
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "oid": "<sha256>", "paths": ["<path>", ...], "message": "<real message>" }
+```
+
+Used by the client's `pre-push` hook (`contrib/lfs-msg-push.sh`), not the
+extension. The caller must be permitted to `upload` *every* listed path, and
+`oid` must equal `sha256(message)`; otherwise the record is rejected (`403`/`400`).
+
 ## OAuth2 (extension side)
 
 The extension obtains the token via the GitLab OAuth2 **authorization-code flow
