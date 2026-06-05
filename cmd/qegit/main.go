@@ -25,6 +25,10 @@ func main() {
 		err = runInit(args)
 	case "clone":
 		err = runClone(args)
+	case "add":
+		err = runAdd(args)
+	case "commit":
+		err = runCommit(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -43,11 +47,15 @@ func usage() {
 	fmt.Fprint(os.Stderr, `qegit — name-hiding git wrapper
 
 Usage:
-  qegit init  -u USER [-s SERVER] [-r REPO] [-p PASSWORD] [-o ORIGIN] [-n NAME] [-e EMAIL] DIR
-  qegit clone -u USER [-s SERVER] [-r REPO] [-p PASSWORD] [-n NAME] [-e EMAIL] REMOTE [DIR]
+  qegit init   -u USER [-s SERVER] [-r REPO] [-p PASSWORD] [-o ORIGIN] [-n NAME] [-e EMAIL] DIR
+  qegit clone  -u USER [-s SERVER] [-r REPO] [-p PASSWORD] [-n NAME] [-e EMAIL] REMOTE [DIR]
+  qegit add    PATH...
+  qegit commit [git commit args...]
 
   init    scaffold a new .qe workspace and wire its hashed repo
   clone   clone an existing hashed repo and reveal authorized files into legible
+  add     stage real files into the hashed repo as token-named LFS pointers
+  commit  commit staged changes, binding the redacted message to real paths
 
 Flags:
   -u USER       LFS user (e.g. alice, bob). Required.
