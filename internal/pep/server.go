@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -43,6 +44,7 @@ func NewServer(auth ports.Authenticator, index ports.PathIndex, store ports.Obje
 	s.policy.Store(pol)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /{repo}/objects/batch", s.batchHandler)
+	mux.HandleFunc("GET /{repo}/names", s.handleNamesList)
 	mux.HandleFunc("GET /{repo}/message", s.handleMessageRead)
 	mux.HandleFunc("POST /{repo}/message", s.handleMessageRecord)
 	s.mux = mux
@@ -242,6 +244,61 @@ func (s *Server) handleMessageRead(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(msg)
+}
+
+// handleNamesList implements GET /{repo}/names, the name-hiding reveal channel:
+// it authenticates the reader, lists every real path recorded for the repo, and
+// returns the subset the reader may download (policy.Decide(download, path) ==
+// Permit). The same download gate as content/messages means a name is revealed
+// exactly when its bytes could be read; denied paths are silently omitted so
+// the response leaks nothing about them. The client tokenizes these real paths
+// to de-tokenize the committed tree (ancestors derived via token.ReverseMap),
+// so the server stays a thin policy filter. See docs/name-hiding-design.md §6, §7.3.
+func (s *Server) handleNamesList(w http.ResponseWriter, r *http.Request) {
+	repo := r.PathValue("repo")
+	subject, err := s.auth.Authenticate(r)
+	if err != nil {
+		s.writeUnauthorized(w)
+		return
+	}
+	if s.requireAuth && isAnonymous(subject) {
+		s.writeUnauthorized(w)
+		return
+	}
+	all, err := s.index.PathsInRepo(repo)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	pol := s.policy.Load()
+	revealed := make([]string, 0, len(all))
+	for _, p := range all {
+		dec := policy.Decide(pol, policy.Request{
+			Subject:  subject,
+			Action:   policy.ActionDownload,
+			Resource: policy.Resource{Repo: repo, Path: p},
+		})
+		if dec.Effect == policy.Permit {
+			revealed = append(revealed, p)
+		}
+	}
+	s.recordNamesAudit(r, subject, repo, len(revealed), len(all))
+	writeJSON(w, http.StatusOK, map[string][]string{"paths": revealed})
+}
+
+// recordNamesAudit logs a single names-list reveal: the request always succeeds
+// (Permit), with the revealed/total counts captured in Reason for visibility
+// into how much of the tree the subject could see.
+func (s *Server) recordNamesAudit(r *http.Request, subject policy.Subject, repo string, revealed, total int) {
+	s.audit.Record(ports.AuditEntry{
+		Timestamp: time.Now().UTC(),
+		RequestID: r.Header.Get("X-Request-Id"),
+		Subject:   primaryPrincipal(subject),
+		Action:    "names-list",
+		Repo:      repo,
+		Effect:    policy.Permit.String(),
+		Reason:    fmt.Sprintf("revealed %d of %d paths", revealed, total),
+	})
 }
 
 // recordMessageAudit logs a message-read decision, attributing a denial to the

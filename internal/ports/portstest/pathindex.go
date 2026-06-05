@@ -76,4 +76,50 @@ func RunPathIndexContract(t *testing.T, factory func() ports.PathIndex) {
 			t.Errorf("repoB leaked repoA's binding: %v", paths)
 		}
 	})
+
+	t.Run("PathsInRepoDedupAcrossOIDs", func(t *testing.T) {
+		idx := factory()
+		// Same path under two OIDs plus a distinct path; the union dedups.
+		for _, rec := range []struct{ oid, path string }{
+			{"oid1", "a/1"}, {"oid2", "a/1"}, {"oid2", "b/2"},
+		} {
+			if err := idx.Record("repoA", rec.oid, rec.path); err != nil {
+				t.Fatalf("record %+v: %v", rec, err)
+			}
+		}
+		got, err := idx.PathsInRepo("repoA")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{"a/1", "b/2"}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("PathsInRepoUnknownRepoEmpty", func(t *testing.T) {
+		idx := factory()
+		paths, err := idx.PathsInRepo("repo-unknown")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(paths) != 0 {
+			t.Errorf("expected empty slice, got %v", paths)
+		}
+	})
+
+	t.Run("PathsInRepoCrossRepoIsolation", func(t *testing.T) {
+		idx := factory()
+		if err := idx.Record("repoA", "oid1", "a/1"); err != nil {
+			t.Fatal(err)
+		}
+		paths, err := idx.PathsInRepo("repoB")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(paths) != 0 {
+			t.Errorf("repoB leaked repoA's paths: %v", paths)
+		}
+	})
 }

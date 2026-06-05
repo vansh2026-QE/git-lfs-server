@@ -129,4 +129,28 @@ func (m *FilePathIndex) PathsFor(repo, oid string) ([]string, error) {
 	return out, nil
 }
 
+// PathsInRepo returns the deduplicated union of every path recorded under repo
+// across all OIDs, sorted for stable order. An unknown repo returns a nil slice
+// with a nil error. Read-only: it does not persist. Used by the name-hiding
+// reveal endpoint (GET /{repo}/names).
+func (m *FilePathIndex) PathsInRepo(repo string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	seen := make(map[string]struct{})
+	for _, set := range m.data[repo] {
+		for p := range set {
+			seen[p] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
 var _ ports.PathIndex = (*FilePathIndex)(nil)

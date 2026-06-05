@@ -52,6 +52,7 @@ type errIndex struct{}
 
 func (errIndex) Record(string, string, string) error       { return nil }
 func (errIndex) PathsFor(string, string) ([]string, error) { return nil, errors.New("boom") }
+func (errIndex) PathsInRepo(string) ([]string, error)      { return nil, errors.New("boom") }
 
 func TestVerifyDownloadClaimInfraError(t *testing.T) {
 	if _, status, err := pep.VerifyDownloadClaim(errIndex{}, "repo", "oid", ""); status != http.StatusInternalServerError || err == nil {

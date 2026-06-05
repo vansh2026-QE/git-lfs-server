@@ -5,14 +5,12 @@
       "paths": {
         "public/**": {
           "user:vansh2026": "rw",
-	        "user:vanshpatel8999": "rw",
           "user:exampleauthalice": "rw",
           "user:exampleauthbob": "rw"
         },
         "private/privAlice/**": { "user:exampleauthalice": "rw" },
         "private/privBob/**":   { "user:exampleauthbob": "rw" },
-        "private/**": { "user:vansh2026": "rw" },
-	"private/privVansh8999/**": {"user:vanshpatel8999": "rw"}
+        "private/**": { "user:vansh2026": "rw" }
       }
     }
   }

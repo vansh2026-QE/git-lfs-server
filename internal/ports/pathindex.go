@@ -10,12 +10,16 @@ package ports
 //     (repo, oid, path) twice is a no-op.
 //   - PathsFor returns every path the OID has been recorded at within this
 //     repo. Order is unspecified but stable across calls in-process.
-//   - An unknown OID returns an empty slice with a nil error — "not found"
-//     is not an error.
+//   - PathsInRepo returns the deduplicated union of every path recorded under
+//     the repo across all OIDs. Order is unspecified but stable across calls
+//     in-process.
+//   - An unknown OID (PathsFor) or unknown repo (PathsInRepo) returns an empty
+//     slice with a nil error — "not found" is not an error.
 //   - Errors are reserved for infrastructure failures (disk, DB, network).
 //
 // See docs/auth-design.md §4.2 and §9.
 type PathIndex interface {
 	Record(repo, oid, path string) error
 	PathsFor(repo, oid string) ([]string, error)
+	PathsInRepo(repo string) ([]string, error)
 }

@@ -29,6 +29,7 @@ func NewLocalServer(s *Server, blobs ports.BlobStore) *LocalServer {
 	mux.HandleFunc("PUT /{repo}/objects/{oid}", ls.putObject)
 	mux.HandleFunc("GET /{repo}/objects/{oid}", ls.getObject)
 	mux.HandleFunc("GET /{repo}/content", ls.getContent)
+	mux.HandleFunc("GET /{repo}/names", s.handleNamesList)
 	mux.HandleFunc("GET /{repo}/message", s.handleMessageRead)
 	mux.HandleFunc("POST /{repo}/message", s.handleMessageRecord)
 	ls.mux = mux
